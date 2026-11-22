@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: uniapp-web-api
+  datasource:
+    hikari:
+      connection-timeout: 2000
+      validation-timeout: 1000
+      # 由 Flyway 检查启动时的迁移，连接池在运行期间按超时处理故障。
+      initialization-fail-timeout: -1
+      data-source-properties:
+        "[connectTimeout]": 1500
+        "[socketTimeout]": 2000
+  data:
+    redis:
+      connect-timeout: 1500ms
+      timeout: 2s
+
+app:
+  auth:
+    public-origin: ${AUTH_PUBLIC_ORIGIN:https://localhost}
+    cookie-secure: ${AUTH_COOKIE_SECURE:true}

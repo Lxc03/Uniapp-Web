@@ -1,0 +1,63 @@
+# [D2-A] PENDING-CONFIRM 根 Compose 管理四个服务，见 docs/decisions(决策).md。
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:5173:80" # 本机浏览器入口，/api 保持同源。
+    depends_on:
+      - api
+
+  api:
+    build: ./backend
+    ports:
+      - "127.0.0.1:8080:8080" # 本机 API 调试入口。
+    # [D3-A] PENDING-CONFIRM 仅注入 API 所需的连接参数，见 docs/decisions(决策).md。
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${MYSQL_DATABASE:?Set MYSQL_DATABASE in .env}"
+      SPRING_DATASOURCE_USERNAME: "${MYSQL_USER:?Set MYSQL_USER in .env}"
+      SPRING_DATASOURCE_PASSWORD: "${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}"
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
+      # [D5-A] 本机 H5 发布到回环地址，HTTPS 部署可注入公开来源和 Secure 设置。
+      AUTH_PUBLIC_ORIGIN: "${AUTH_PUBLIC_ORIGIN:-http://localhost:5173}"
+      AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-false}"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mysql:
+    # 应用迁移、用户、打卡项和记录保存在本项目卷，应用仅通过内网访问。
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: "${MYSQL_DATABASE:?Set MYSQL_DATABASE in .env}"
+      MYSQL_USER: "${MYSQL_USER:?Set MYSQL_USER in .env}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}"
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}"
+    volumes:
+      - mysql_data:/var/lib/mysql # 保存 MySQL 数据和首次初始化结果。
+    healthcheck:
+      # 等待正式 MySQL 进程开放 TCP。
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    # P1/P2 会话与 CSRF 使用内网 Redis，健康检查验证已认证的 PING。
+    image: redis:7.4-alpine
+    environment:
+      REDISCLI_AUTH: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
+    command: ["sh", "-c", 'exec docker-entrypoint.sh redis-server --requirepass "$$REDISCLI_AUTH"']
+    healthcheck:
+      # 用本服务的密码执行 PING，要求收到 PONG。
+      test: ["CMD-SHELL", "redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  mysql_data:

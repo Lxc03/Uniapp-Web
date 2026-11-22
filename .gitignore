@@ -44,6 +44,9 @@ jspm_packages/
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/
 
+# Maven build output
+/backend/target/
+
 # TypeScript cache
 *.tsbuildinfo
 
@@ -69,6 +72,9 @@ web_modules/
 .env
 .env.*
 !.env.example
+
+# 保存在本地的开发文档
+/docs/
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
