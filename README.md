@@ -7,7 +7,20 @@ H5 通过 Nginx 调用 Spring Boot。MySQL 保存用户、打卡项和每日打�
 
 ## 快速启动
 
-需要运行中的 Docker Linux 引擎，以及支持 `docker compose run --env-from-file` 的 Compose。在包含 `compose.yaml` 的 `Uniapp-Web` 目录打开 PowerShell，执行以下命令。首次会拉取镜像并下载构建依赖，耗时取决于网络和缓存。
+启动 Docker Desktop（Linux 容器模式），或在 Linux 上启动 Docker Engine 并安装 Compose 插件。用 `docker info` 和 `docker compose version` 确认可用，确认 `docker compose run --help` 支持 `--env-from-file`，并让本机的 `5173`、`8080` 端口空闲。前端、API、MySQL 和 Redis 都由 Compose 启动，Node.js、JDK 和 Maven 也在容器内使用。第一次拉取镜像和下载构建依赖的时间取决于网络与缓存。
+
+已下载代码包可直接进入含 `compose.yaml` 的目录。从 GitHub 获取代码时，用当前项目分支克隆。
+
+```sh
+git clone --branch codex/development-plan https://github.com/Lxc03/Uniapp-Web.git
+cd Uniapp-Web
+```
+
+### 生成环境文件
+
+在包含 `compose.yaml` 的目录执行。脚本只在缺少 `.env` 时创建该文件，并随机生成容器内 MySQL 应用用户、MySQL 管理员和 Redis 的密码。默认模式与电脑上已有的 MySQL 账号、密码和 `3306` 端口配置相互独立。
+
+Windows 使用 PowerShell。
 
 ```powershell
 if (-not (Test-Path -LiteralPath .env)) {
@@ -18,12 +31,41 @@ if (-not (Test-Path -LiteralPath .env)) {
     }
     Set-Content -Encoding ascii -LiteralPath .env -Value $settings
 }
-docker compose -p uniapp-web --env-file .env up -d --build
-if ($LASTEXITCODE -ne 0) { throw 'Compose 启动失败，请查看上方输出。' }
-curl.exe --noproxy "*" --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 90 --max-time 4 http://localhost:5173/api/ready
 ```
 
-已有 `.env` 时直接复用。就绪接口返回 `{"status":"ready","mysql":"up","redis":"up"}` 后，打开 [H5 首页](http://localhost:5173/)。首次登录前执行下文的账号初始化。若就绪检查失败，在同一目录运行 `docker compose -p uniapp-web --env-file .env logs --tail=80 api mysql redis`。
+macOS 或 Linux 使用终端。下例用 `openssl` 生成密码，也可按[配置说明](#配置说明)手动填写。
+
+```sh
+if [ ! -f .env ]; then
+  (
+    set -e
+    umask 077
+    db_password=$(openssl rand -hex 16)
+    root_password=$(openssl rand -hex 16)
+    redis_password=$(openssl rand -hex 16)
+    sed -e 's/replace_with_db_name/uniapp_web/' \
+        -e 's/replace_with_db_user/uniapp_app/' \
+        -e "s/replace_with_db_password/$db_password/" \
+        -e "s/replace_with_db_root_password/$root_password/" \
+        -e "s/replace_with_redis_password/$redis_password/" .env.example > .env
+  )
+fi
+```
+
+### 启动并登录
+
+```sh
+docker compose -p uniapp-web --env-file .env up -d --build
+```
+
+打开[就绪检查](http://localhost:5173/api/ready)，服务刚启动时可以稍等片刻再刷新。看到 `{"status":"ready","mysql":"up","redis":"up"}` 后，按[初始化账号并登录](#初始化账号并登录)生成演示账号，再打开首页登录。[H5 首页](http://localhost:5173/)
+
+若启动或就绪检查失败，在同一目录查看容器状态和日志。用完可执行 `docker compose -p uniapp-web --env-file .env stop`，MySQL 数据会保存在命名卷中。
+
+```sh
+docker compose -p uniapp-web --env-file .env ps
+docker compose -p uniapp-web --env-file .env logs --tail=80 frontend api mysql redis
+```
 
 ## 项目结构
 
@@ -37,7 +79,15 @@ curl.exe --noproxy "*" --fail --silent --show-error --retry 30 --retry-all-error
 
 ## 配置说明
 
-手动配置时，在仓库根目录复制 `.env.example` 为 `.env`，将五个占位值替换为本机配置。用简单标识符填写 MySQL 库名和用户名。初始化变量在空的 MySQL 数据卷首次启动时生效，后续启动使用与现有数据卷匹配的 `.env`。`.env` 受 Git 忽略。
+手动配置时，在仓库根目录复制 `.env.example` 为 `.env`，按下表替换五个占位值。MySQL 初始化变量在空数据卷首次启动时生效。后续请复用与现有数据卷匹配的 `.env`。已有库要更换密码时，先用 MySQL 管理员执行 `ALTER USER`，再同步修改 `.env` 并执行 `docker compose -p uniapp-web --env-file .env up -d` 让新配置生效。`.env` 受 Git 忽略。[MySQL 镜像初始化说明](https://github.com/docker-library/docs/tree/master/mysql#environment-variables)
+
+| `.env` 配置项 | 用途 |
+| --- | --- |
+| `MYSQL_DATABASE` | 容器内的应用库，快速启动使用 `uniapp_web` |
+| `MYSQL_USER` | API 使用的普通数据库用户，快速启动使用 `uniapp_app` |
+| `MYSQL_PASSWORD` | `MYSQL_USER` 的密码 |
+| `MYSQL_ROOT_PASSWORD` | 容器内 MySQL 的管理员密码 |
+| `REDIS_PASSWORD` | Redis 和 API 共用的认证密码 |
 
 ```powershell
 docker compose -p uniapp-web --env-file .env config --quiet
@@ -51,7 +101,7 @@ MySQL 和 Redis 通过 Compose 网络访问，连接参数按服务注入。MySQ
 
 ## 初始化账号并登录
 
-API 启动时用 Flyway 迁移数据库。就绪后，在同一目录执行以下命令。首次生成两个不同的演示密码，后续运行复用 Git 忽略的 `.env.demo`。
+API 启动时用 Flyway 迁移数据库。就绪后，在同一目录按对应系统执行命令。Windows 使用 PowerShell。首次生成两个不同的演示密码，后续运行复用 Git 忽略的 `.env.demo`。
 
 ```powershell
 if (-not (Test-Path -LiteralPath .env.demo)) {
@@ -61,38 +111,76 @@ if (-not (Test-Path -LiteralPath .env.demo)) {
     ) | Set-Content -Encoding ascii .env.demo
 }
 docker compose -p uniapp-web --env-file .env run --rm --no-deps --env-from-file .env.demo api --spring.main.web-application-type=none --spring.profiles.active=demo-init
-Get-Content .env.demo
+if ($LASTEXITCODE -ne 0) { throw '演示账号初始化失败。' }
+```
+
+macOS 或 Linux 使用终端。
+
+```sh
+if [ ! -f .env.demo ]; then
+  (
+    set -e
+    umask 077
+    demo_a_password=$(openssl rand -hex 16)
+    demo_b_password=$(openssl rand -hex 16)
+    printf 'DEMO_A_PASSWORD=%s\nDEMO_B_PASSWORD=%s\n' "$demo_a_password" "$demo_b_password" > .env.demo
+  )
+fi
+docker compose -p uniapp-web --env-file .env run --rm --no-deps --env-from-file .env.demo api --spring.main.web-application-type=none --spring.profiles.active=demo-init
 ```
 
 初始化只在单次运行的容器中读取演示密码。由 MySQL 唯一索引处理重复执行，保留原账号 ID 和密码摘要。
 
-打开 [H5 首页](http://localhost:5173/)，用 `demo_a` 或 `demo_b` 配对应密码登录。点击「新建打卡项」创建「阅读」，再点「打今日卡」。确认卡片显示「今日已打卡」、连续 1 天，并且今日完成数增加 1。刷新后状态应保持。验证服务端防重时，在浏览器 Network 中重发当天的打卡 POST。首次返回 `201`，重复请求返回 `200`，两个响应包含同一个打卡记录 ID。会话有效期从登录起固定为 30 分钟。
+用本地编辑器查看 `.env.demo`。账号 `demo_a` 对应 `DEMO_A_PASSWORD`，`demo_b` 对应 `DEMO_B_PASSWORD`。打开首页，用其中一个账号登录。[H5 首页](http://localhost:5173/)
+
+点击「新建打卡项」创建「阅读」，再点「打今日卡」。确认卡片显示「今日已打卡」、连续 1 天，并且今日完成数增加 1。刷新后状态应保持。验证服务端防重时，在浏览器 Network 中重发当天的打卡 POST。首次返回 `201`，重复请求返回 `200`，两个响应包含同一个打卡记录 ID。会话有效期从登录起固定为 30 分钟。
 
 本地 Compose 公开来源默认为 `http://localhost:5173`。通过 HTTPS 代理部署时，用 `AUTH_PUBLIC_ORIGIN` 指定实际公开来源，并设置 `AUTH_COOKIE_SECURE=true`。
 
 ## 使用本机 MySQL 验收
 
-在 Docker Desktop 环境中，可显式启用本机 MySQL 配置。此模式通过 `host.docker.internal:3306` 访问宿主机 MySQL，只启动 H5、API 和 Redis。验收环境有独立的数据库和 Compose 项目，H5 使用 `127.0.0.1:5174`，API 使用 `127.0.0.1:8081`。浏览器按主机名保存会话 Cookie，因此请用 `127.0.0.1` 打开验收页面，与默认 `localhost:5173` 的会话隔离。
+需要接入电脑上已有的 MySQL 时，使用 Docker Desktop 和 Compose 2.24.4 或更新版本加载 `compose.local-mysql.yaml`。此模式通过 `host.docker.internal:3306` 访问宿主机 MySQL，只启动 H5、API 和 Redis。H5 使用 `127.0.0.1:5174`，API 使用 `127.0.0.1:8081`。[Docker Desktop 宿主机网络](https://docs.docker.com/desktop/features/networking/networking-how-tos/#connect-a-container-to-a-service-on-the-host) · [Compose 覆盖语法](https://docs.docker.com/reference/compose-file/merge/#replace-value)
 
-在本机 MySQL 创建独立验收库，并用 Git 忽略的 `.env.local-mysql` 保存库名和连接信息。把下列值替换为本机配置。Flyway 会在这一数据库创建应用表。
+### 创建验收库和应用账号
 
-```dotenv
-LOCAL_MYSQL_DATABASE=uniapp_web_local_acceptance
-LOCAL_MYSQL_USERNAME=your_local_mysql_user
-LOCAL_MYSQL_PASSWORD=your_local_mysql_password
+在本机用 `mysql -u root -p` 或 MySQL 客户端登录管理员账号。`root` 和 `123456` 只适用于恰好如此配置的本机数据库。如果你的管理员账号或密码不同，在这一登录步骤使用实际凭据。然后创建一个独立的验收库和应用账号，把示例密码换成自己设置的密码。也可以复用已有的普通账号，只要它允许 Docker Desktop 发起的连接，并有权限在所选库里执行 Flyway 迁移和应用读写。[MySQL 创建账号和授权说明](https://dev.mysql.com/doc/refman/8.4/en/creating-accounts.html)
+
+```sql
+CREATE DATABASE IF NOT EXISTS uniappreview CHARACTER SET utf8mb4;
+CREATE USER 'uniapp_local_app'@'%' IDENTIFIED BY 'replace_with_your_app_password';
+GRANT ALL PRIVILEGES ON uniappreview.* TO 'uniapp_local_app'@'%';
 ```
 
-在项目目录执行以下命令。`.env.local-mysql.demo` 采用上文 `.env.demo` 的格式，保存此验收库的演示密码。
+示例使用 `%` 匹配 Docker Desktop 的连接来源，授权范围为 `uniappreview` 库。若本机数据库有固定的容器访问范围，可将两个语句中的 `%` 都换成对应来源。若账号已存在，跳过 `CREATE USER`，使用该账号的实际密码。
+
+### 填写连接信息并启动
+
+按[环境文件步骤](#生成环境文件)准备 `.env`，再在同一目录新建 `.env.local-mysql`。把下面三个值填写为实际库名、应用用户名和应用密码。密码中的 `$` 等字符可用单引号包起来，按字面值读取。两个文件均受 Git 忽略。[Compose 环境文件语法](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/#env-file-syntax)
+
+```dotenv
+LOCAL_MYSQL_DATABASE=uniappreview
+LOCAL_MYSQL_USERNAME=uniapp_local_app
+LOCAL_MYSQL_PASSWORD='replace_with_your_app_password'
+```
+
+在仓库根目录用 PowerShell 启动。Flyway 会在上述数据库创建应用表。如果 MySQL 使用其他端口，先创建本地 `.temp/` 目录，把 `compose.local-mysql.yaml` 复制进去。在副本的 `SPRING_DATASOURCE_URL` 中把 `3306` 改为实际端口，再把下方第二个 `-f` 指向 `.temp/compose.local-mysql.yaml`。
 
 ```powershell
 $localCompose = @('-f', 'compose.yaml', '-f', 'compose.local-mysql.yaml', '--env-file', '.env', '--env-file', '.env.local-mysql', '-p', 'uniapp-web-local-mysql')
+docker compose @localCompose config --quiet
+if ($LASTEXITCODE -ne 0) { throw 'Compose 配置检查失败。' }
 docker compose @localCompose up -d --build
+if ($LASTEXITCODE -ne 0) { throw 'Compose 启动失败。' }
 curl.exe --noproxy "*" --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 90 --max-time 4 http://127.0.0.1:5174/api/ready
-docker compose @localCompose run --rm --no-deps --env-from-file .env.local-mysql.demo api --spring.main.web-application-type=none --spring.profiles.active=demo-init
-Get-Content .env.local-mysql.demo
 ```
 
-打开 [本机 MySQL 验收首页](http://127.0.0.1:5174/)。用 `docker compose @localCompose stop` 停止该验收环境，宿主机 MySQL 继续运行。
+就绪后，为这个验收库单独创建 `.env.local-mysql.demo`，变量格式与[初始化账号](#初始化账号并登录)中的 `.env.demo` 相同。用以下命令初始化账号，再用 `demo_a` 或 `demo_b` 和对应密码登录。请用 `http://127.0.0.1:5174/` 打开页面，该主机名与默认 `localhost:5173` 的浏览器会话分开。[本机 MySQL 验收首页](http://127.0.0.1:5174/)
+
+```powershell
+docker compose @localCompose run --rm --no-deps --env-from-file .env.local-mysql.demo api --spring.main.web-application-type=none --spring.profiles.active=demo-init
+```
+
+若未就绪，用 `docker compose @localCompose logs --tail=80 api redis` 查看原因。`Access denied` 时核对 `.env.local-mysql` 的账号、密码和授权来源。连不上时确认宿主机 MySQL 正在运行，并检查监听端口和防火墙是否允许 Docker Desktop 访问。用 `docker compose @localCompose stop` 停止验收环境，宿主机 MySQL 继续运行。
 
 ### 验证会话失效和恢复
 
@@ -104,6 +192,17 @@ docker compose -p $projectName --env-file $envFile exec -T redis redis-cli --raw
 ```
 
 重新登录后，按「演练与恢复」的命令暂停并启动测试项目的 Redis。暂停期间刷新 H5，`/api/auth/me` 应返回 503，页面显示重试。恢复后再次验证登录。验收记录保留 HTTP 状态、业务码和 TTL 数字，对 Cookie 与会话键脱敏。
+
+## Android 真机演示
+
+2026 年 11 月 23 日，在 Xiaomi 17 Pro Max 的系统浏览器中，通过 USB 和 `adb reverse` 访问本地开发版本的 H5，完成了登录、创建「阅读20分钟」、打卡和查看月历。手机访问的 `http://localhost:5173/` 由 Nginx 提供页面，并通过同源 `/api` 调用后端。
+
+| ① 手机打开登录页 | ② 登录后创建习惯并打卡 | ③ 查看近 7 天记录和月历 |
+| --- | --- | --- |
+| <img src="assets/phone-demo/01-login.jpg" width="240" alt="Android 真机打开习惯打卡的登录页，显示用户名、密码和注册入口"> | <img src="assets/phone-demo/02-check-in.jpg" width="240" alt="Android 真机上阅读20分钟打卡成功，今日完成 1 项，连续 1 天"> | <img src="assets/phone-demo/03-calendar.jpg" width="240" alt="Android 真机月历中 11 月 23 日标记为已打卡，显示本月打卡和连续统计"> |
+| 手机浏览器显示登录表单和注册入口。 | 「阅读20分钟」显示今日已打卡，今日完成 `1 / 1`，连续 `1 天`。 | 11 月 23 日在月历标记为已打卡。本月打卡、当前连续和最长连续均为 `1 天`。昨天早于习惯创建日，页面说明了无法补卡的原因。 |
+
+当前分支的启动验收按上文初始化演示账号，登录后验证创建习惯、今日打卡和连续天数。
 
 ## 验证就绪
 
